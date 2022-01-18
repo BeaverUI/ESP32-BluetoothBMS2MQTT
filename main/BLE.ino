@@ -103,6 +103,8 @@ void handleBLE(){
     // found the desired BLE server, now connect to it
     if (connectToServer()){
       BLE_client_connected = true;
+      ble_packets_received=0;
+      
       mqttdebug("BLE: connected");
     }else{
       BLE_client_connected = false;
