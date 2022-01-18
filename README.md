@@ -14,5 +14,5 @@ Tested on TTGO-Energy (https://github.com/LilyGO/LILYGO-T-Energy).
 To configure the module, change the following in main.ino:
 - configure your MQTT server and set the node name
 - configure your WiFi (SSID + password)
-- program the code, check the MQTT messages for the BMS correct device name and device address
+- program the code, check the MQTT messages for the correct BMS device name and device address
 - configure the BLE name and address to the detected BMS name and addres
