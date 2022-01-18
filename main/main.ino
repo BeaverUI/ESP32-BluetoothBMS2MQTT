@@ -188,7 +188,7 @@ void handleMQTT(void){
       //mqttclient.publish(GetTopic("battery-voltage"), String(battery_voltage,2));
 
       mqttclient.publish(GetTopic("bms-status"), String(bms_status));
-      mqttclient.publish(GetTopic("bms-last-updated"), String( (millis()-bms_last_update_time)/1000 ));
+      mqttclient.publish(GetTopic("bms-status-age"), String( (millis()-bms_last_update_time)/1000 ));
 
       if(bms_status){
         mqttclient.publish(GetTopic("number-of-cells"), String(packCellInfo.NumOfCells));
