@@ -6,7 +6,7 @@ This work is based on https://github.com/kolins-cz/Smart-BMS-Bluetooth-ESP32, wi
 * various bugfixes and protocol improvements (fixes for memory leaks, reboots and reconnect problems)
 * more advanced timeout and connection-related features, saving energy of the BMS
 * added MQTT functionality
-* removed the display stuff (uses MQTT instead)
+* removed the display routines (uses MQTT instead)
 
 ## Usage
 Required stuff:
