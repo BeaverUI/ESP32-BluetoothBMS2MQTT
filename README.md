@@ -9,7 +9,7 @@ This work is based on https://github.com/kolins-cz/Smart-BMS-Bluetooth-ESP32 by 
 * removed the display stuff (uses MQTT instead)
 
 Needs ESP32 with bluetooth and WiFi.
-Tested on TTGO-Energy (https://github.com/LilyGO/LILYGO-T-Energy) - note that it also reads the on-board battery voltage.
+Tested on TTGO-Energy (https://github.com/LilyGO/LILYGO-T-Energy).
 
 To configure the module, change the following in main.ino:
 - configure your MQTT server and set the node name
