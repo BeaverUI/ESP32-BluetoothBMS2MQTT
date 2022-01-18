@@ -8,7 +8,7 @@ This work is based on https://github.com/kolins-cz/Smart-BMS-Bluetooth-ESP32, wi
 * added MQTT functionality
 * removed the display stuff (uses MQTT instead)
 
-
+## Usage
 Required stuff:
 - ESP32 (with Bluetooth and WiFi). This code was tested on TTGO-Energy (https://github.com/LilyGO/LILYGO-T-Energy) and T-Koala (https://github.com/LilyGO/T-Koala) boards, but should work with any ESP32.
 - Raspberry Pi or other Linux server, running an MQTT server (e.g. mosquitto) and something to display the data (e.g. Node-RED).
