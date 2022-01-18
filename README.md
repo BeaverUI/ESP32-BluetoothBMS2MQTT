@@ -30,3 +30,6 @@ To configure the module, change the following in main.ino:
 * configure your WiFi (SSID + password)
 * program the code, check the MQTT messages for the correct BMS device name and device address
 * configure the BLE name and address to the detected BMS name and addres
+
+## Example output in Node-RED
+<img src="Example implementation Node-RED.png" width="500px"></br>
