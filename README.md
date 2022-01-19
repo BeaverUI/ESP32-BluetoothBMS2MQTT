@@ -14,6 +14,8 @@ This work is based on https://github.com/kolins-cz/Smart-BMS-Bluetooth-ESP32, wi
 * Raspberry Pi or other Linux server, running an MQTT server (e.g. mosquitto) and something to display the data (e.g. Node-RED).
 * In Node-RED, I recommend to use the "node-red-dashboard" library to display status on a nice web-based dashboard.
 
+Note: some ESP boards experience brownouts (resets) with this code due to the high consumption of WiFi + Bluetooth which causes power supply stability issues. This can be fixed by removing the diode that is in series with the USB connector, and adding a 220uF (or similar) electrolytic capacitor between +5V and GND, and another one between +3V3 and GND (these pins are typically available on the headers, so they are easy to add). When adding one, mind the polarity of the capacitor.
+
 ## Programming the ESP
 * Install the Arduino IDE
 * Configure the IDE:
