@@ -89,13 +89,13 @@ bool processCellInfo(packCellInfoStruct *output, byte *data, unsigned int dataLe
         {
             _cellMin = output->CellVolt[i];
         }
-
     }
+    
     output->CellMin = _cellMin;
     output->CellMax = _cellMax;
     output->CellDiff = _cellMax - _cellMin;
     output->CellAvg = _cellSum / output->NumOfCells;
-    
+
     return true;
 }
 
@@ -149,7 +149,7 @@ bool bmsProcessPacket(byte *packet)
     return result;
 }
 
-bool bleCollectPacket(char *data, uint32_t dataSize) // reconstruct packet from BLE incomming data, called by notifyCallback function
+bool bleCollectPacket(char *data, uint32_t dataSize) // reconstruct packet, called by notifyCallback function
 {
     static uint8_t packetstate = 0; //0 - empty, 1 - first half of packet received, 2- second half of packet received
     static uint8_t packetbuff[2*BMS_MAX_CELLS+15] = {0x0};
@@ -167,8 +167,7 @@ bool bleCollectPacket(char *data, uint32_t dataSize) // reconstruct packet from 
         }
         retVal = false;
     }
-
-    if (data[dataSize - 1] == 0x77 && packetstate == 1) //probably got 2nd half of the packet
+    else if (data[dataSize - 1] == 0x77 && packetstate == 1) //probably got 2nd half of the packet
     {
         packetstate = 2;
         for (uint8_t i = 0; i < dataSize; i++)
@@ -177,7 +176,7 @@ bool bleCollectPacket(char *data, uint32_t dataSize) // reconstruct packet from 
         }
         retVal = false;
     }
-
+    
     if (packetstate == 2) //got full packet
     {
         uint8_t packet[dataSize + previousDataSize];
@@ -204,7 +203,60 @@ void bmsRequestCellInfo(){
     sendCommand(data, sizeof(data));
 }
 
+/*
+void printBasicInfo() //debug all data to uart
+{
+    Serial.printf("Total voltage: %f\n", (float)packBasicInfo.Volts / 1000);
+    Serial.printf("Amps: %f\n", (float)packBasicInfo.Amps / 1000);
+    Serial.printf("CapacityRemainAh: %f\n", (float)packBasicInfo.CapacityRemainAh / 1000);
+    Serial.printf("CapacityRemainPercent: %d\n", packBasicInfo.CapacityRemainPercent);
+    Serial.printf("Temp1: %f\n", (float)packBasicInfo.Temp1 / 10);
+    Serial.printf("Temp2: %f\n", (float)packBasicInfo.Temp2 / 10);
+    Serial.printf("Balance Code Low: 0x%x\n", packBasicInfo.BalanceCodeLow);
+    Serial.printf("Balance Code High: 0x%x\n", packBasicInfo.BalanceCodeHigh);
+    Serial.printf("Mosfet Status: 0x%x\n", packBasicInfo.MosfetStatus);
+}
 
+void printCellInfo() //debug all data to uart
+{
+    Serial.printf("Number of cells: %u\n", packCellInfo.NumOfCells);
+    for (byte i = 1; i <= packCellInfo.NumOfCells; i++)
+    {
+        Serial.printf("Cell no. %u", i);
+        Serial.printf("   %f\n", (float)packCellInfo.CellVolt[i - 1] / 1000);
+    }
+    Serial.printf("Max cell volt: %f\n", (float)packCellInfo.CellMax / 1000);
+    Serial.printf("Min cell volt: %f\n", (float)packCellInfo.CellMin / 1000);
+    Serial.printf("Difference cell volt: %f\n", (float)packCellInfo.CellDiff / 1000);
+    Serial.printf("Average cell volt: %f\n", (float)packCellInfo.CellAvg / 1000);
+    Serial.println();
+}
+
+void constructBigString() //debug all data to uart
+{
+    stringBuffer[0] = '\0'; //clear old data
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Total voltage: %f\n", (float)packBasicInfo.Volts / 1000);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Amps: %f\n", (float)packBasicInfo.Amps / 1000);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "CapacityRemainAh: %f\n", (float)packBasicInfo.CapacityRemainAh / 1000);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "CapacityRemainPercent: %d\n", packBasicInfo.CapacityRemainPercent);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Temp1: %f\n", (float)packBasicInfo.Temp1 / 10);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Temp2: %f\n", (float)packBasicInfo.Temp2 / 10);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Balance Code Low: 0x%x\n", packBasicInfo.BalanceCodeLow);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Balance Code High: 0x%x\n", packBasicInfo.BalanceCodeHigh);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Mosfet Status: 0x%x\n", packBasicInfo.MosfetStatus);
+
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Number of cells: %u\n", packCellInfo.NumOfCells);
+    for (byte i = 1; i <= packCellInfo.NumOfCells; i++)
+    {
+        snprintf(stringBuffer, STRINGBUFFERSIZE, "Cell no. %u", i);
+        snprintf(stringBuffer, STRINGBUFFERSIZE, "   %f\n", (float)packCellInfo.CellVolt[i - 1] / 1000);
+    }
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Max cell volt: %f\n", (float)packCellInfo.CellMax / 1000);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Min cell volt: %f\n", (float)packCellInfo.CellMin / 1000);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Difference cell volt: %f\n", (float)packCellInfo.CellDiff / 1000);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "Average cell volt: %f\n", (float)packCellInfo.CellAvg / 1000);
+    snprintf(stringBuffer, STRINGBUFFERSIZE, "\n");
+}
 
 void hexDump(const char *data, uint32_t dataSize) //debug function
 {
@@ -216,6 +268,7 @@ void hexDump(const char *data, uint32_t dataSize) //debug function
     }
     Serial.println("");
 }
+*/
 
 int16_t two_ints_into16(int highbyte, int lowbyte) // turns two bytes into a single long integer
 {

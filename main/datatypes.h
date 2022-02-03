@@ -36,4 +36,23 @@ typedef struct
 	uint16_t CellAvg;
 } packCellInfoStruct;
 
+/*
+struct packEepromStruct
+{
+	uint16_t POVP;
+	uint16_t PUVP;
+	uint16_t COVP;
+	uint16_t CUVP;
+	uint16_t POVPRelease;
+	uint16_t PUVPRelease;
+	uint16_t COVPRelease;
+	uint16_t CUVPRelease;
+	uint16_t CHGOC;
+	uint16_t DSGOC;
+};
+
+#define STRINGBUFFERSIZE 300
+char stringBuffer[STRINGBUFFERSIZE];
+*/
+
 #endif /* mydatatypes_H_ */

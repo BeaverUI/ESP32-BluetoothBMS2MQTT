@@ -6,29 +6,58 @@
  * 
  * Settings:
  *  Flash mode DIO
- *  Partitioning: 1.9MB app (otherwise it won't fit!)
+ *  Partitioning: 1.9MB app (with OTA) - otherwise it won't fit
  *  CPU clock: 80 MHz
  * 
- * Uses ESP-WROVER package from https://dl.espressif.com/dl/package_esp32_index.json
+ * Uses ESP-WROVER package (v2.0.1) from https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
  */
 
 #include "datatypes.h" // for brevity the BMS stuff is in this file
-
 #include <WiFi.h> // for WiFi
-#include "BLEDevice.h" // for BLE
+#include <BLEDevice.h> // for BLE
 #include <ESPmDNS.h> // for OTA updates
 #include <ArduinoOTA.h> // for OTA updates
 #include <MQTT.h> // for MQTT
-#include <WiFiClient.h> // for HTTP push messages
-#include <driver/adc.h> // to read ESP battery voltage
+#include <WiFiClient.h> // for MQTT
 
-// BMS device config
-#define BLE_NAME "xiaoxiang" // name of BMS (check the mqtt debug messages to see whether this is OK)
-#define BLE_ADDRESS "a4:c1:38:1a:0c:49" // address of BMS (check the mqtt debug messages to see whether this is OK)
+#include <driver/adc.h> // to read ESP battery voltage
+#include <rom/rtc.h> // to get reset reason
+
+
+// Init BLE
+#define BLE_MIN_RSSI -85 // minimum signal strength before connection is attempted
+#define BLE_NAME "TBD" // name of BMS
+#define BLE_ADDRESS "a4:c1:38:1a:0c:49" // address of BMS
+#define BLE_DEBUG_OVER_MQTT true // send BLE debug messages via MQTT
+
 static BLEUUID serviceUUID("0000ff00-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms service
 static BLEUUID charUUID_rx("0000ff01-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms rx id
 static BLEUUID charUUID_tx("0000ff02-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms tx id
 
+#define BLE_SCAN_INTERVAL 15000 // interval for scanning devices when not connected in ms
+#define BLE_SCAN_DURATION 1 // duration of scan in seconds
+
+#define BLE_REQUEST_INTERVAL 2500 // package request interval - make this large enough not to overlap packet requests
+#define BLE_PACKETSRECEIVED_BEFORE_STANDBY 0b11 // packets to gather before disconnecting
+#define BLE_TIMEOUT_BEFORE_STANDBY 15000 // timeout before going to standby in ms
+#define BLE_STANDBY_PERIOD 2*60*1000 // interval between data retrievals in ms (disconnected in-between)
+
+boolean doScan = false; // becomes true when BLE is initialized and scanning is allowed
+boolean doConnect = false; // becomes true when correct ID is found during scanning
+boolean ble_client_connected = false; // true when fully connected
+unsigned int ble_packets_received = 0b00; // keeps track of received packets
+
+
+// Init MQTT
+#define MQTTSERVER "192.168.1.2"
+#define NODE_NAME "ble"
+
+// Init WiFi
+int status = WL_IDLE_STATUS;
+#define WIFI_SSID "YOURSSID"
+#define WIFI_PASSWORD "YOURPASSWORD"
+
+// Init BMS
 const byte cBasicInfo = 3; //datablock 3=basic info
 const byte cCellInfo = 4;  //datablock 4=individual cell info
 packBasicInfoStruct packBasicInfo;
@@ -36,44 +65,24 @@ packCellInfoStruct packCellInfo;
 unsigned long bms_last_update_time=0;
 bool bms_status;
 
-
-// BLE config
-#define BLE_SCAN_INTERVAL 30000 // interval for scanning devices when not connected in ms
-#define BLE_SCAN_DURATION 2 // duration of scan in seconds
-
-#define BLE_REQUEST_INTERVAL 2500 // package request interval - make this large enough not to overlap packet requests
-#define BLE_PACKETSRECEIVED_BEFORE_STANDBY 0b11 // packets to gather before disconnecting
-#define BLE_TIMEOUT_BEFORE_STANDBY 30000 // timeout before going to standby in ms
-#define BLE_STANDBY_PERIOD 10*60*1000 // interval between data retrievals in ms (disconnected in-between)
-
-boolean doScan = false; // becomes true when BLE is initialized and scanning is allowed
-boolean doConnect = false; // becomes true when correct ID is found during scanning
-boolean BLE_client_connected = false; // true when fully connected
-unsigned int ble_packets_received = 0b00;
-
-
-// MQTT config
-#define MQTTSERVER "192.168.1.11"
-#define NODE_NAME "ble"
-
-// WiFi config
-int status = WL_IDLE_STATUS;
-#define WIFI_SSID "YOUR_SSID"
-#define WIFI_PASSWORD "YOUR_PASSWORD"
+// Init wificlient
+WiFiClient wificlient_mqtt;
 
 // Init mqttclient
 MQTTClient mqttclient;
-WiFiClient wificlient_mqtt;
 int mqtt_reconnects=0;
 int mqtt_interval=5; //default mqtt publishing interval in seconds
 
 // Other stuff
-//float battery_voltage=0; // internal battery voltage
+float battery_voltage=0; // internal battery voltage
+
+
+
 
 void setup(){
   delay(1000);
-  Serial.begin(115200);  
-
+  Serial.begin(115200);
+  
   // Start networking
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -129,63 +138,73 @@ void setup(){
   mqttclient.begin(MQTTSERVER, wificlient_mqtt);
   mqttclient.onMessage(handleMQTTreceive);
   MQTTconnect();
+
   
   // Start BLE
-	bleStartup();
+  bleStart();
 }
 
 
 // === Main stuff ====
 void loop(){
   ArduinoOTA.handle();
-
-  //getEspBatteryVoltage();
+  getEspBatteryVoltage();
   handleMQTT();
-  handleBLE(); // in BLE
+  handleBLE(); // in BLE.ino
 }
 
 
-/*
-// read voltage of onboard battery (can be used with TTGO-Energy board)
+
+// read voltage of onboard battery
 void getEspBatteryVoltage(void){
   static unsigned long prev_millis=0;
 
-  if((millis()>prev_millis+mqtt_interval*1000)||(millis()<prev_millis)){
+  if((millis()>=prev_millis+5*mqtt_interval*1000)||(millis()<prev_millis)){
     prev_millis=millis();
 
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(ADC1_CHANNEL_7,ADC_ATTEN_DB_11);
 
-    battery_voltage = ((float) 2*adc1_get_raw(ADC1_CHANNEL_7)*(3.3/4095));
+    battery_voltage = ((float) 2*adc1_get_raw(ADC1_CHANNEL_7)*(3.3*1.06/4095));
   }
 }
-*/
+
 
 // ===== Handles for MQTT =====
 // handle connection and send messages at intervals
 void handleMQTT(void){
   static unsigned long prev_millis=0;
-
+  
+  if(WiFi.status() != WL_CONNECTED){
+    Serial.println("WiFi disconnected. Reconnecting.");
+  }
+  while(WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(1000);
+  }
+  
   if (!mqttclient.connected()){
     MQTTconnect();
   }else{
-    mqttclient.loop();
-    
-    if((millis()>prev_millis+mqtt_interval*1000)||(millis()<prev_millis)){
+   
+    if((millis()>=prev_millis+mqtt_interval*1000)||(millis()<prev_millis)){
       prev_millis=millis();
-      
+
       // Send MQTT messages at interval
       Serial.println("Sending MQTT update");
 
       mqttclient.publish(GetTopic("ip"), IPAddressString(WiFi.localIP()));
       mqttclient.publish(GetTopic("free-heap"), String(ESP.getFreeHeap()));
+      mqttclient.publish(GetTopic("maxalloc-heap"), String(ESP.getMaxAllocHeap()));
       mqttclient.publish(GetTopic("ssid"), WiFi.SSID());
       mqttclient.publish(GetTopic("rssi"), String(WiFi.RSSI()));
+      
+      mqttclient.publish(GetTopic("reset-reason"), String(GetResetReason(0)) + String(" | ") + String(GetResetReason(1)));
       
       mqttclient.publish(GetTopic("interval"), String(mqtt_interval));
       mqttclient.publish(GetTopic("runtime"), String(millis()/1000));
       mqttclient.publish(GetTopic("reconnects"), String(mqtt_reconnects));
-      //mqttclient.publish(GetTopic("battery-voltage"), String(battery_voltage,2));
+      mqttclient.publish(GetTopic("battery-voltage"), String(battery_voltage,2));
 
       mqttclient.publish(GetTopic("bms-status"), String(bms_status));
       mqttclient.publish(GetTopic("bms-status-age"), String( (millis()-bms_last_update_time)/1000 ));
@@ -194,13 +213,19 @@ void handleMQTT(void){
         mqttclient.publish(GetTopic("number-of-cells"), String(packCellInfo.NumOfCells));
         mqttclient.publish(GetTopic("current"), String((float)packBasicInfo.Amps / 1000,2));
         mqttclient.publish(GetTopic("voltage"), String((float)packBasicInfo.Volts / 1000,2));
-        mqttclient.publish(GetTopic("cell-voltage"), String((float)packBasicInfo.Volts /(1000*packCellInfo.NumOfCells), 2));
+        if(packCellInfo.NumOfCells != 0){
+          mqttclient.publish(GetTopic("cell-voltage"), String((float)packBasicInfo.Volts /(1000*packCellInfo.NumOfCells), 2));
+        }
+        mqttclient.publish(GetTopic("cell-diff"), String((float)packCellInfo.CellDiff, 0));
         mqttclient.publish(GetTopic("soc"), String((float)packBasicInfo.CapacityRemainPercent,1));
     
         mqttclient.publish(GetTopic("temperature-1"), String((float)packBasicInfo.Temp1 / 10,1));
         mqttclient.publish(GetTopic("temperature-2"), String((float)packBasicInfo.Temp2 / 10,1));
       }
     }
+    
+    mqttclient.loop();
+    
   }
 }
 
@@ -210,14 +235,16 @@ void handleMQTTreceive(String &topic, String &payload) {
   if(topic.indexOf(GetTopic("interval-ref")) >=0){
     mqtt_interval = payload.toInt();
   }
+  
 }
+
 
 // connect and subscribe
 void MQTTconnect(void) {
   // Retry until connected
   static unsigned long prev_millis=0;
 
-  if((!mqttclient.connected()) && ((millis()>prev_millis+5*1000)||(millis()<prev_millis))){
+  if((!mqttclient.connected()) && ((millis()>=prev_millis+5*1000)||(millis()<prev_millis))){
     prev_millis=millis();
     
     Serial.print("Attempting MQTT connection...");
@@ -242,15 +269,15 @@ String IPAddressString(IPAddress address){
   return String(address[0]) + "." + String(address[1]) + "." + String(address[2]) + "." + String(address[3]);
 }
 
-void mqttdebug(char* msg){
-  if (mqttclient.connected()){
-    mqttclient.publish(GetTopic("debug"), String(msg));
-  }
+
+void MqttDebug(const char* msg){
+  MqttDebug(String(msg));
 }
 
-void mqttdebug_string(String msg){
+void MqttDebug(String msg){
   if (mqttclient.connected()){
     mqttclient.publish(GetTopic("debug"), msg);
+    mqttclient.loop();
   }
 }
 
@@ -262,4 +289,28 @@ String Float2SciStr(float number, int digits){
   char char_buffer[40];
   sprintf(char_buffer,"%.*E", digits, number);
   return String(char_buffer);
+}
+
+String GetResetReason(int core)
+{
+  RESET_REASON reason=rtc_get_reset_reason(core);
+  switch (reason)
+  {
+    case 1 : return String("POWERON_RESET");break;          /**<1, Vbat power on reset*/
+    case 3 : return String("SW_RESET");break;               /**<3, Software reset digital core*/
+    case 4 : return String("OWDT_RESET");break;             /**<4, Legacy watch dog reset digital core*/
+    case 5 : return String("DEEPSLEEP_RESET");break;        /**<5, Deep Sleep reset digital core*/
+    case 6 : return String("SDIO_RESET");break;             /**<6, Reset by SLC module, reset digital core*/
+    case 7 : return String("TG0WDT_SYS_RESET");break;       /**<7, Timer Group0 Watch dog reset digital core*/
+    case 8 : return String("TG1WDT_SYS_RESET");break;       /**<8, Timer Group1 Watch dog reset digital core*/
+    case 9 : return String("RTCWDT_SYS_RESET");break;       /**<9, RTC Watch dog Reset digital core*/
+    case 10 : return String("INTRUSION_RESET");break;       /**<10, Instrusion tested to reset CPU*/
+    case 11 : return String("TGWDT_CPU_RESET");break;       /**<11, Time Group reset CPU*/
+    case 12 : return String("SW_CPU_RESET");break;          /**<12, Software reset CPU*/
+    case 13 : return String("RTCWDT_CPU_RESET");break;      /**<13, RTC Watch dog Reset CPU*/
+    case 14 : return String("EXT_CPU_RESET");break;         /**<14, for APP CPU, reseted by PRO CPU*/
+    case 15 : return String("RTCWDT_BROWN_OUT_RESET");break;/**<15, Reset when the vdd voltage is not stable*/
+    case 16 : return String("RTCWDT_RTC_RESET");break;      /**<16, RTC Watch dog reset digital core and rtc module*/
+    default : return String("NO_MEAN");
+  }
 }
