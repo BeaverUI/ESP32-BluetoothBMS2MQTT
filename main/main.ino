@@ -9,7 +9,13 @@
  *  Partitioning: 1.9MB app (with OTA) - otherwise it won't fit
  *  CPU clock: 80 MHz
  * 
- * Uses ESP-WROVER package (v2.0.1) from https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+ * Uses ESP-WROVER package (v2.0.2) from https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+ * 
+ * NOTE:
+ * I still need to fix a bug with callbacks from BLE overriding processes in the main loop.
+ * When a callback happens at the moment our main loop is doing something with WiFi, this might cause MQTT messages to get corrupted or the ESP to crash.
+ * This problem is reduced by setting BLE_CALLBACK_DEBUG to false.
+ * Note: it is further reduced by "ble_active" boolean, which is used to avoid WiFi activity when BLE is active.
  */
 
 #include "datatypes.h" // for brevity the BMS stuff is in this file
@@ -25,10 +31,12 @@
 
 
 // Init BLE
+boolean ble_active = false; // tries to reduce the overlap callbacks and WiFi activity
+
 #define BLE_MIN_RSSI -85 // minimum signal strength before connection is attempted
-#define BLE_NAME "TBD" // name of BMS
+#define BLE_NAME "xiaoxiang" // name of BMS
 #define BLE_ADDRESS "a4:c1:38:1a:0c:49" // address of BMS
-#define BLE_DEBUG_OVER_MQTT true // send BLE debug messages via MQTT
+#define BLE_CALLBACK_DEBUG false // send debug messages via MQTT & serial in callbacks (handy for finding your BMS address, name, RSSI, etc - read note above!)
 
 static BLEUUID serviceUUID("0000ff00-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms service
 static BLEUUID charUUID_rx("0000ff01-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms rx id
@@ -40,22 +48,17 @@ static BLEUUID charUUID_tx("0000ff02-0000-1000-8000-00805f9b34fb"); //xiaoxiang 
 #define BLE_REQUEST_INTERVAL 2500 // package request interval - make this large enough not to overlap packet requests
 #define BLE_PACKETSRECEIVED_BEFORE_STANDBY 0b11 // packets to gather before disconnecting
 #define BLE_TIMEOUT_BEFORE_STANDBY 15000 // timeout before going to standby in ms
-#define BLE_STANDBY_PERIOD 2*60*1000 // interval between data retrievals in ms (disconnected in-between)
-
-boolean doScan = false; // becomes true when BLE is initialized and scanning is allowed
-boolean doConnect = false; // becomes true when correct ID is found during scanning
-boolean ble_client_connected = false; // true when fully connected
-unsigned int ble_packets_received = 0b00; // keeps track of received packets
+#define BLE_STANDBY_PERIOD 5*60*1000 // interval between data retrievals in ms (disconnected in-between)
 
 
 // Init MQTT
-#define MQTTSERVER "192.168.1.2"
-#define NODE_NAME "ble"
+#define MQTTSERVER "192.168.1.1"
+#define NODE_NAME "bms2mqtt"
 
 // Init WiFi
 int status = WL_IDLE_STATUS;
-#define WIFI_SSID "YOURSSID"
-#define WIFI_PASSWORD "YOURPASSWORD"
+#define WIFI_SSID "your_ssid"
+#define WIFI_PASSWORD "your_password"
 
 // Init BMS
 const byte cBasicInfo = 3; //datablock 3=basic info
@@ -75,7 +78,6 @@ int mqtt_interval=5; //default mqtt publishing interval in seconds
 
 // Other stuff
 float battery_voltage=0; // internal battery voltage
-
 
 
 
@@ -148,9 +150,12 @@ void setup(){
 // === Main stuff ====
 void loop(){
   ArduinoOTA.handle();
-  getEspBatteryVoltage();
-  handleMQTT();
   handleBLE(); // in BLE.ino
+  
+  if(!ble_active){
+    getEspBatteryVoltage();
+    handleMQTT();
+  }
 }
 
 
@@ -159,8 +164,7 @@ void loop(){
 void getEspBatteryVoltage(void){
   static unsigned long prev_millis=0;
 
-  if((millis()>=prev_millis+5*mqtt_interval*1000)||(millis()<prev_millis)){
-    prev_millis=millis();
+  if(InterruptPending(&prev_millis,5*mqtt_interval*1000,1)){
 
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(ADC1_CHANNEL_7,ADC_ATTEN_DB_11);
@@ -187,9 +191,8 @@ void handleMQTT(void){
     MQTTconnect();
   }else{
    
-    if((millis()>=prev_millis+mqtt_interval*1000)||(millis()<prev_millis)){
-      prev_millis=millis();
-
+    if(InterruptPending(&prev_millis,mqtt_interval*1000,1)){
+  
       // Send MQTT messages at interval
       Serial.println("Sending MQTT update");
 
@@ -244,21 +247,22 @@ void MQTTconnect(void) {
   // Retry until connected
   static unsigned long prev_millis=0;
 
-  if((!mqttclient.connected()) && ((millis()>=prev_millis+5*1000)||(millis()<prev_millis))){
-    prev_millis=millis();
-    
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    
-    if (mqttclient.connect(NODE_NAME)) {
-      Serial.println("connected");
-      mqttclient.publish(GetTopic("ip"), IPAddressString(WiFi.localIP()));
+  if(!mqttclient.connected()){
+    if(InterruptPending(&prev_millis,5*1000,0)){
       
-      mqttclient.subscribe(GetTopic("interval-ref"));
-            
-      mqtt_reconnects++;
-    } else {
-      Serial.print("failed");
+      Serial.print("Attempting MQTT connection...");
+      // Attempt to connect
+      
+      if (mqttclient.connect(NODE_NAME)) {
+        Serial.println("connected");
+        mqttclient.publish(GetTopic("ip"), IPAddressString(WiFi.localIP()));
+        
+        mqttclient.subscribe(GetTopic("interval-ref"));
+              
+        mqtt_reconnects++;
+      } else {
+        Serial.print("failed");
+      }
     }
   }
 }

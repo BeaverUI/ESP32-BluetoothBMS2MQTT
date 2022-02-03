@@ -189,18 +189,18 @@ bool bleCollectPacket(char *data, uint32_t dataSize) // reconstruct packet, call
     return retVal;
 }
 
-void bmsRequestBasicInfo(){
+bool bmsRequestBasicInfo(){
     // header status command length data checksum footer
     //   DD     A5      03     00    FF     FD      77
     uint8_t data[7] = {0xdd, 0xa5, cBasicInfo, 0x0, 0xff, 0xfd, 0x77};
-    sendCommand(data, sizeof(data));
+    return sendCommand(data, sizeof(data));
 }
 
-void bmsRequestCellInfo(){
+bool bmsRequestCellInfo(){
     // header status command length data checksum footer
     //  DD      A5      04     00    FF     FC      77
     uint8_t data[7] = {0xdd, 0xa5, cCellInfo, 0x0, 0xff, 0xfc, 0x77};
-    sendCommand(data, sizeof(data));
+    return sendCommand(data, sizeof(data));
 }
 
 /*
