@@ -1,4 +1,5 @@
 // EasyInterrupt - software interrupts
+// by Bas Vermulst
 
 bool InterruptPending(unsigned long *prev_millis, unsigned int period, int mode){
   // mode = 0: approximate mode without catch-up
