@@ -52,7 +52,7 @@ static BLEUUID charUUID_tx("0000ff02-0000-1000-8000-00805f9b34fb"); //xiaoxiang 
 
 
 // Init MQTT
-#define MQTTSERVER "192.168.1.11"
+#define MQTTSERVER "192.168.1.2"
 #define NODE_NAME "bms2mqtt"
 
 // Init WiFi
