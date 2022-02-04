@@ -176,7 +176,7 @@ void handleBLE(){
       MqttDebug("BLE: requesting packet 0b10");
 
       if(bmsRequestCellInfo()){
-        ble_packets_requested |= 0b11;
+        ble_packets_requested |= 0b10;
       }
     }
     
