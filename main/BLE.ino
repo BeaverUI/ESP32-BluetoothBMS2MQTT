@@ -338,8 +338,8 @@ bool connectToServer(){
 
 
   
-  delay(250); // wait, otherwise writeValue doesn't work for some reason
-              // to do: fix this ugly hack
+  delay(BLE_REQUEST_DELAY); // wait, otherwise writeValue doesn't work for some reason
+                            // to do: fix this ugly hack
 
   MqttDebug(String("BLE: connected"));
   

@@ -45,14 +45,14 @@ static BLEUUID charUUID_tx("0000ff02-0000-1000-8000-00805f9b34fb"); //xiaoxiang 
 #define BLE_SCAN_INTERVAL 15000 // interval for scanning devices when not connected in ms
 #define BLE_SCAN_DURATION 1 // duration of scan in seconds
 
-#define BLE_REQUEST_INTERVAL 2500 // package request interval - make this large enough not to overlap packet requests
+#define BLE_REQUEST_DELAY 500 // package request delay after connecting - make this large enough to have the connection established
 #define BLE_PACKETSRECEIVED_BEFORE_STANDBY 0b11 // packets to gather before disconnecting
 #define BLE_TIMEOUT_BEFORE_STANDBY 15000 // timeout before going to standby in ms
 #define BLE_STANDBY_PERIOD 5*60*1000 // interval between data retrievals in ms (disconnected in-between)
 
 
 // Init MQTT
-#define MQTTSERVER "192.168.1.2"
+#define MQTTSERVER "192.168.1.11"
 #define NODE_NAME "bms2mqtt"
 
 // Init WiFi
