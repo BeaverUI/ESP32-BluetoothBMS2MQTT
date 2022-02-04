@@ -26,13 +26,13 @@ unsigned int ble_packets_received = 0b00; // keeps track of received packets
 
 void MyEndOfScanCallback(BLEScanResults pBLEScanResult){
     bms_status=false; // BMS not found
-    ble_active=false; // BLE will stop doing things now, so we can use WiFi stuff again
     
     if(BLE_CALLBACK_DEBUG){
       MqttDebug("BLE: scan finished");
       Serial.println("Scan finished.");
     }
 
+    ble_active=false; // BLE will stop doing things now, so we can use WiFi stuff again
 }
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks{
@@ -93,6 +93,8 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks{
 class MyClientCallback : public BLEClientCallbacks{
   // called on connect/disconnect
   void onConnect(BLEClient* pclient){
+    ble_active=true;
+    
     if(BLE_CALLBACK_DEBUG){
       MqttDebug(String("BLE: connecting to ") + String(pclient->getPeerAddress().toString().c_str()));
     }
@@ -101,10 +103,12 @@ class MyClientCallback : public BLEClientCallbacks{
   void onDisconnect(BLEClient* pclient){
     ble_client_connected = false;
     doConnect = false;
-
+   
     if(BLE_CALLBACK_DEBUG){
       MqttDebug(String("BLE: disconnected from ") + String(pclient->getPeerAddress().toString().c_str()));
     }
+
+    ble_active=false;
   }
 };
 
@@ -153,7 +157,6 @@ void handleBLE(){
       ble_packets_requested=0;
 
     }else{
-      ble_active=false;
       ble_client_connected = false;
       MqttDebug("BLE: failed to connect");
     }

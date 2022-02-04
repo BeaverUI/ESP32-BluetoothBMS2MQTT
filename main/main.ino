@@ -52,13 +52,12 @@ static BLEUUID charUUID_tx("0000ff02-0000-1000-8000-00805f9b34fb"); //xiaoxiang 
 
 
 // Init MQTT
-#define MQTTSERVER "192.168.1.1"
+#define MQTTSERVER "192.168.1.2"
 #define NODE_NAME "bms2mqtt"
 
 // Init WiFi
-int status = WL_IDLE_STATUS;
 #define WIFI_SSID "your_ssid"
-#define WIFI_PASSWORD "your_password"
+#define WIFI_PASSWORD "your_wifi_password"
 
 // Init BMS
 const byte cBasicInfo = 3; //datablock 3=basic info
