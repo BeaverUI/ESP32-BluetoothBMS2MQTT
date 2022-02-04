@@ -149,10 +149,10 @@ void setup(){
 
 // === Main stuff ====
 void loop(){
-  ArduinoOTA.handle();
   handleBLE(); // in BLE.ino
   
   if(!ble_active){
+    ArduinoOTA.handle();
     getEspBatteryVoltage();
     handleMQTT();
   }
