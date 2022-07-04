@@ -53,6 +53,8 @@ static BLEUUID charUUID_tx("0000ff02-0000-1000-8000-00805f9b34fb"); //xiaoxiang 
 
 // Init MQTT
 #define MQTTSERVER "192.168.1.2"
+#define MQTT_USERNAME "" // leave empty if no credentials are needed
+#define MQTT_PASSWORD "" 
 #define NODE_NAME "bms2mqtt"
 
 // Init WiFi
@@ -251,8 +253,14 @@ void MQTTconnect(void) {
       
       Serial.print("Attempting MQTT connection...");
       // Attempt to connect
-      
-      if (mqttclient.connect(NODE_NAME)) {
+      int retVal;
+      if(strcmp(MQTT_USERNAME, "") == 0){
+        retVal=mqttclient.connect(NODE_NAME);
+      }else{
+        retVal=mqttclient.connect(NODE_NAME,MQTT_USERNAME,MQTT_PASSWORD);
+      }
+
+      if (retVal) {
         Serial.println("connected");
         mqttclient.publish(GetTopic("ip"), IPAddressString(WiFi.localIP()));
         
