@@ -31,8 +31,6 @@ void MyEndOfScanCallback(BLEScanResults pBLEScanResult){
       MqttDebug("BLE: scan finished");
       Serial.println("Scan finished.");
     }
-
-    ble_active=false; // BLE will stop doing things now, so we can use WiFi stuff again
 }
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks{
@@ -93,7 +91,6 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks{
 class MyClientCallback : public BLEClientCallbacks{
   // called on connect/disconnect
   void onConnect(BLEClient* pclient){
-    ble_active=true;
     
     if(BLE_CALLBACK_DEBUG){
       MqttDebug(String("BLE: connecting to ") + String(pclient->getPeerAddress().toString().c_str()));
@@ -108,14 +105,15 @@ class MyClientCallback : public BLEClientCallbacks{
       MqttDebug(String("BLE: disconnected from ") + String(pclient->getPeerAddress().toString().c_str()));
     }
 
-    ble_active=false;
   }
 };
 
 static void MyNotifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify){
   //this is called when BLE server sents data via notification
   //hexDump((char*)pData, length);
-  bleCollectPacket((char *)pData, length);
+  if(!bleCollectPacket((char *)pData, length)){
+    MqttDebug("ERROR: packet could not be collected.");
+  }
 }
 
 
@@ -125,68 +123,61 @@ static void MyNotifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, 
 // ======= OTHERS =========
 
 void handleBLE(){
-  static unsigned long prev_millis_update = 0;
-  static unsigned long prev_millis_scan = 30000;
-  static unsigned long prev_millis_standby=0;
-
-  if(!doScan){
-    if(InterruptPending(&prev_millis_standby,BLE_STANDBY_PERIOD,1)){
-      MqttDebug("BLE: continuing");
-      bleContinue();
-    }
-  }else{  
-    if((ble_packets_received == BLE_PACKETSRECEIVED_BEFORE_STANDBY) || ((millis()>prev_millis_standby+BLE_TIMEOUT_BEFORE_STANDBY)&&(ble_client_connected))){    
+  static unsigned long prev_millis_standby = 0;
+  
+  prev_millis_standby = millis();
+  
+  while(true){ // loop until we hit a timeout or gathered all packets
+    
+    if((ble_packets_received == BLE_PACKETSRECEIVED_BEFORE_STANDBY) || (millis()>prev_millis_standby+BLE_SCAN_TIMEOUT)){    
       if(ble_packets_received == BLE_PACKETSRECEIVED_BEFORE_STANDBY){
-        MqttDebug("BLE: all packets received, going to standby");
+        MqttDebug("BLE: all packets received");
         bms_status=true; // BMS was connected, data up-to-date
         
       }else{
-        MqttDebug("BLE: connection timeout, going to standby");
+        MqttDebug("BLE: connection timeout");
         bms_status=false; // BMS not (fully) connected
       }
-            
-      blePause();
+
+      break; // we're done with BLE, exit while loop
     }
-  }
+    else if (doConnect){
+      
+      // found the desired BLE server, now connect to it
+      if (connectToServer()){
+        ble_client_connected = true;
+        ble_packets_received=0;
+        ble_packets_requested=0;
   
-  if (doConnect){
-    // found the desired BLE server, now connect to it
-    if (connectToServer()){
-      ble_client_connected = true;
-      ble_packets_received=0;
-      ble_packets_requested=0;
-
-    }else{
-      ble_client_connected = false;
-      MqttDebug("BLE: failed to connect");
-    }
-    
-    doConnect = false;
-  }
-
-  if (ble_client_connected){
-    // if connected to BLE server, request all data
-    if((ble_packets_requested & 0b01)!=0b01){
-      // request packet 0b01
-      MqttDebug("BLE: requesting packet 0b01");
-      
-      if(bmsRequestBasicInfo()){
-        ble_packets_requested |= 0b01;
+      }else{
+        ble_client_connected = false;
+        MqttDebug("BLE: failed to connect");
       }
       
-    }else if(((ble_packets_received & 0b01)==0b01) && ((ble_packets_requested & 0b10)!=0b10)){
-      // request packet 0b10 after 0b01 has been received
-      MqttDebug("BLE: requesting packet 0b10");
-
-      if(bmsRequestCellInfo()){
-        ble_packets_requested |= 0b10;
-      }
+      doConnect = false;
     }
-    
-  }else if ((!doConnect)&&(doScan)){
-    // we are not connected, so we can scan for devices if we like
-    if (InterruptPending(&prev_millis_scan,BLE_SCAN_INTERVAL,1)){ // scanning period
+  
+    if (ble_client_connected){
+      // if connected to BLE server, request all data
+      if((ble_packets_requested & 0b01)!=0b01){
+        // request packet 0b01
+        MqttDebug("BLE: requesting packet 0b01");
+        delay(50);
+        if(bmsRequestBasicInfo()){
+          ble_packets_requested |= 0b01;
+        }
+        
+      }else if(((ble_packets_received & 0b01)==0b01) && ((ble_packets_requested & 0b10)!=0b10)){
+        // request packet 0b10 after 0b01 has been received
+        MqttDebug("BLE: requesting packet 0b10");
+        delay(50);
+        if(bmsRequestCellInfo()){
+          ble_packets_requested |= 0b10;
+        }
+      }
       
+    }else if ((!doConnect)&&(doScan)){
+      // we are not connected, so we can scan for devices
       MqttDebug("BLE: not connected, starting scan");
       Serial.print("BLE is not connected, starting scan");
 
@@ -200,18 +191,26 @@ void handleBLE(){
       pBLEScan->setInterval(1 << 8); // 160 ms
       pBLEScan->setWindow(1 << 7); // 80 ms
       pBLEScan->start(BLE_SCAN_DURATION, MyEndOfScanCallback, false); // non-blocking, use a callback
-
-      ble_active=true; // ble will start doing things now, so avoid using WiFi in the meantime
-
+      
+      doScan=false;
+      
       MqttDebug("BLE: scan started");      
     }
   }
+}
+
+void bleStartGatherPacketsStop(){
+  bleStart();
+  handleBLE();
+  blePause();
+  BLEDevice::deinit(false);
 }
 
 void bleStart(){
   Serial.print("Starting BLE... ");
 
   BLEDevice::init("");
+  //esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT); // release some unused memory
   
   // Retrieve a BLE client
   pClient = BLEDevice::createClient();
@@ -234,6 +233,8 @@ void blePause(){
     pClient->disconnect();
   }
   
+  delay(50);
+    
   pBLEScan->stop();
   
   ble_client_connected=false;
@@ -241,7 +242,6 @@ void blePause(){
   ble_packets_received=0;
   ble_packets_requested=0;
 
-  ble_active=false;
 }
 
 
@@ -253,7 +253,6 @@ void bleContinue(){
   
   doScan=true; // start scanning for new devices
 }
-
 
 bool connectToServer(){
   if(pRemoteDevice==nullptr){
@@ -269,13 +268,17 @@ bool connectToServer(){
   Serial.print("Forming a connection to ");
   Serial.println(pRemoteDevice->getAddress().toString().c_str());
   
+  delay(100);
+
   // Connect to the remote BLE Server.
-  if(!pClient->connect(pRemoteDevice)){
+  pClient->connect(pRemoteDevice);
+  if(!(pClient->isConnected())){
     MqttDebug(String("BLE: failed to connect"));
     Serial.println("Failed to connect to server");
     pClient->disconnect();
     return false;   
   }
+  
   Serial.println(" - Connected to server");
 
 
@@ -335,7 +338,6 @@ bool connectToServer(){
     return false;
   }
   Serial.println(" - TX is writable");
-
 
   
   delay(BLE_REQUEST_DELAY); // wait, otherwise writeValue doesn't work for some reason

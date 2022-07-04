@@ -11,13 +11,35 @@
  * 
  * Uses ESP-WROVER package (v2.0.2) from https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
  * 
- * NOTE:
- * I still need to fix a bug with callbacks from BLE overriding processes in the main loop.
- * When a callback happens at the moment our main loop is doing something with WiFi, this might cause MQTT messages to get corrupted or the ESP to crash.
- * This problem is reduced by setting BLE_CALLBACK_DEBUG to false.
- * Note: it is further reduced by "ble_active" boolean, which is used to avoid WiFi activity when BLE is active.
  */
+ 
+// ==== SETTINGS ====
+// BMS
+#define BMS_MAX_CELLS 15 // defines size of data types
 
+// BLE
+#define BLE_MIN_RSSI -85 // minimum signal strength before connection is attempted
+#define BLE_NAME "xiaoxiang" // name of BMS
+#define BLE_ADDRESS "a4:c1:38:1a:0c:49" // address of BMS
+
+#define BLE_SCAN_INTERVAL 10*60*1000 // data output interval (shorter = connect more often = more battery consumption from BMS) in ms
+#define BLE_SCAN_TIMEOUT 15*1000 // timeout of scan + gathering packets (too short will fail collecting all packets) in ms
+#define BLE_SCAN_DURATION 1 // duration of scan in seconds
+#define BLE_REQUEST_DELAY 500 // package request delay after connecting - make this large enough to have the connection established in ms
+
+#define BLE_CALLBACK_DEBUG true // send debug messages via MQTT & serial in callbacks (handy for finding your BMS address, name, RSSI, etc)
+
+// MQTT
+#define MQTTSERVER "192.168.1.11"
+#define NODE_NAME "bms2mqtt"
+
+// WiFi
+#define WIFI_SSID "WIFI_SSID"
+#define WIFI_PASSWORD "WIFI_PASSWORD"
+
+
+
+// ==== MAIN CODE ====
 #include "datatypes.h" // for brevity the BMS stuff is in this file
 #include <WiFi.h> // for WiFi
 #include <BLEDevice.h> // for BLE
@@ -29,62 +51,36 @@
 #include <driver/adc.h> // to read ESP battery voltage
 #include <rom/rtc.h> // to get reset reason
 
+#define OTA_PERIOD 30*1000 // period to be online (also allows OTA updates after reset)
 
-// Init BLE
-boolean ble_active = false; // tries to reduce the overlap callbacks and WiFi activity
-
-#define BLE_MIN_RSSI -85 // minimum signal strength before connection is attempted
-#define BLE_NAME "xiaoxiang" // name of BMS
-#define BLE_ADDRESS "a4:c1:38:1a:0c:49" // address of BMS
-#define BLE_CALLBACK_DEBUG false // send debug messages via MQTT & serial in callbacks (handy for finding your BMS address, name, RSSI, etc - read note above!)
-
+// Init BMS
 static BLEUUID serviceUUID("0000ff00-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms service
 static BLEUUID charUUID_rx("0000ff01-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms rx id
 static BLEUUID charUUID_tx("0000ff02-0000-1000-8000-00805f9b34fb"); //xiaoxiang bms tx id
 
-#define BLE_SCAN_INTERVAL 15000 // interval for scanning devices when not connected in ms
-#define BLE_SCAN_DURATION 1 // duration of scan in seconds
-
-#define BLE_REQUEST_DELAY 500 // package request delay after connecting - make this large enough to have the connection established
-#define BLE_PACKETSRECEIVED_BEFORE_STANDBY 0b11 // packets to gather before disconnecting
-#define BLE_TIMEOUT_BEFORE_STANDBY 15000 // timeout before going to standby in ms
-#define BLE_STANDBY_PERIOD 5*60*1000 // interval between data retrievals in ms (disconnected in-between)
-
-
-// Init MQTT
-#define MQTTSERVER "192.168.1.2"
-#define MQTT_USERNAME "" // leave empty if no credentials are needed
-#define MQTT_PASSWORD "" 
-#define NODE_NAME "bms2mqtt"
-
-// Init WiFi
-#define WIFI_SSID "your_ssid"
-#define WIFI_PASSWORD "your_wifi_password"
-
-// Init BMS
 const byte cBasicInfo = 3; //datablock 3=basic info
 const byte cCellInfo = 4;  //datablock 4=individual cell info
 packBasicInfoStruct packBasicInfo;
 packCellInfoStruct packCellInfo;
 unsigned long bms_last_update_time=0;
 bool bms_status;
+#define BLE_PACKETSRECEIVED_BEFORE_STANDBY 0b11 // packets to gather before disconnecting
 
-// Init wificlient
 WiFiClient wificlient_mqtt;
-
-// Init mqttclient
 MQTTClient mqttclient;
-int mqtt_reconnects=0;
-int mqtt_interval=5; //default mqtt publishing interval in seconds
 
 // Other stuff
 float battery_voltage=0; // internal battery voltage
-
+String debug_log_string="";
 
 
 void setup(){
   delay(1000);
   Serial.begin(115200);
+  
+  // connect BLE, gather data from BMS, then disconnect again
+  bleStartGatherPacketsStop();
+  
   
   // Start networking
   WiFi.mode(WIFI_STA);
@@ -95,6 +91,7 @@ void setup(){
   while (WiFi.status() != WL_CONNECTED) {Serial.print("."); delay(1000);} Serial.println("");
   Serial.println("Connected");
   Serial.println("IP address: " + IPAddressString(WiFi.localIP()));
+
 
   // Init OTA updates
   ArduinoOTA.setPort(8266);    // Port defaults to 8266
@@ -136,50 +133,59 @@ void setup(){
   });
   ArduinoOTA.begin();
 
+  
+  getEspBatteryVoltage();
 
   // Start MQTT
   mqttclient.begin(MQTTSERVER, wificlient_mqtt);
   mqttclient.onMessage(handleMQTTreceive);
   MQTTconnect();
+  handleMQTT();
+  mqttclient.disconnect();
 
+
+  // reset error handling
+  bool unexpected_error=false;
+  if((GetResetReason(0) == String("SW_RESET")) || (GetResetReason(0) == String("SW_CPU_RESET"))) {
+    unexpected_error=true;
+  }
   
-  // Start BLE
-  bleStart();
+  // allow OTA during 30 seconds after power on/reset
+  while((millis() < OTA_PERIOD)||(unexpected_error==true)){
+    // run this loop for a bit to allow OTA updates
+    ArduinoOTA.handle();
+
+    if(unexpected_error == true){
+      MqttDebug("ERROR: Software-reset of CPU! Something was messed up.");
+      MqttPublishDebug();
+      delay(5000);
+    }
+  }
+
+  esp_sleep_enable_timer_wakeup(BLE_SCAN_INTERVAL * 1e3); // standby period is in ms, function accepts us
+  Serial.flush();
+  esp_deep_sleep_start(); // sweet dreams
 }
 
 
 // === Main stuff ====
 void loop(){
-  handleBLE(); // in BLE.ino
-  
-  if(!ble_active){
-    ArduinoOTA.handle();
-    getEspBatteryVoltage();
-    handleMQTT();
-  }
+  // never reached (we're sleeping)
 }
-
 
 
 // read voltage of onboard battery
 void getEspBatteryVoltage(void){
-  static unsigned long prev_millis=0;
+  adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten(ADC1_CHANNEL_7,ADC_ATTEN_DB_11);
 
-  if(InterruptPending(&prev_millis,5*mqtt_interval*1000,1)){
-
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_7,ADC_ATTEN_DB_11);
-
-    battery_voltage = ((float) 2*adc1_get_raw(ADC1_CHANNEL_7)*(3.3*1.06/4095));
-  }
+  battery_voltage = ((float) 2*adc1_get_raw(ADC1_CHANNEL_7)*(3.3*1.06/4095));
 }
 
 
 // ===== Handles for MQTT =====
 // handle connection and send messages at intervals
 void handleMQTT(void){
-  static unsigned long prev_millis=0;
-  
   if(WiFi.status() != WL_CONNECTED){
     Serial.println("WiFi disconnected. Reconnecting.");
   }
@@ -191,57 +197,46 @@ void handleMQTT(void){
   if (!mqttclient.connected()){
     MQTTconnect();
   }else{
-   
-    if(InterruptPending(&prev_millis,mqtt_interval*1000,1)){
-  
-      // Send MQTT messages at interval
-      Serial.println("Sending MQTT update");
+    // Send MQTT message
+    Serial.println("Sending MQTT update");
 
-      mqttclient.publish(GetTopic("ip"), IPAddressString(WiFi.localIP()));
-      mqttclient.publish(GetTopic("free-heap"), String(ESP.getFreeHeap()));
-      mqttclient.publish(GetTopic("maxalloc-heap"), String(ESP.getMaxAllocHeap()));
-      mqttclient.publish(GetTopic("ssid"), WiFi.SSID());
-      mqttclient.publish(GetTopic("rssi"), String(WiFi.RSSI()));
-      
-      mqttclient.publish(GetTopic("reset-reason"), String(GetResetReason(0)) + String(" | ") + String(GetResetReason(1)));
-      
-      mqttclient.publish(GetTopic("interval"), String(mqtt_interval));
-      mqttclient.publish(GetTopic("runtime"), String(millis()/1000));
-      mqttclient.publish(GetTopic("reconnects"), String(mqtt_reconnects));
-      mqttclient.publish(GetTopic("battery-voltage"), String(battery_voltage,2));
-
-      mqttclient.publish(GetTopic("bms-status"), String(bms_status));
-      mqttclient.publish(GetTopic("bms-status-age"), String( (millis()-bms_last_update_time)/1000 ));
-
-      if(bms_status){
-        mqttclient.publish(GetTopic("number-of-cells"), String(packCellInfo.NumOfCells));
-        mqttclient.publish(GetTopic("current"), String((float)packBasicInfo.Amps / 1000,2));
-        mqttclient.publish(GetTopic("voltage"), String((float)packBasicInfo.Volts / 1000,2));
-        if(packCellInfo.NumOfCells != 0){
-          mqttclient.publish(GetTopic("cell-voltage"), String((float)packBasicInfo.Volts /(1000*packCellInfo.NumOfCells), 2));
-        }
-        mqttclient.publish(GetTopic("cell-diff"), String((float)packCellInfo.CellDiff, 0));
-        mqttclient.publish(GetTopic("soc"), String((float)packBasicInfo.CapacityRemainPercent,1));
+    mqttclient.publish(GetTopic("ip"), IPAddressString(WiFi.localIP()));
+    mqttclient.publish(GetTopic("free-heap"), String(ESP.getFreeHeap()));
+    mqttclient.publish(GetTopic("maxalloc-heap"), String(xPortGetMinimumEverFreeHeapSize()));
+    mqttclient.publish(GetTopic("ssid"), WiFi.SSID());
+    mqttclient.publish(GetTopic("rssi"), String(WiFi.RSSI()));
     
-        mqttclient.publish(GetTopic("temperature-1"), String((float)packBasicInfo.Temp1 / 10,1));
-        mqttclient.publish(GetTopic("temperature-2"), String((float)packBasicInfo.Temp2 / 10,1));
+    mqttclient.publish(GetTopic("reset-reason"), String(GetResetReason(0)) + String(" | ") + String(GetResetReason(1)));
+    
+    mqttclient.publish(GetTopic("runtime"), String(millis()/1000));
+    mqttclient.publish(GetTopic("battery-voltage"), String(battery_voltage,2));
+
+    mqttclient.publish(GetTopic("bms-status"), String(bms_status));
+    mqttclient.publish(GetTopic("bms-status-age"), String( (millis()-bms_last_update_time)/1000 ));
+
+    if(bms_status){
+      mqttclient.publish(GetTopic("number-of-cells"), String(packCellInfo.NumOfCells));
+      mqttclient.publish(GetTopic("current"), String((float)packBasicInfo.Amps / 1000,2));
+      mqttclient.publish(GetTopic("voltage"), String((float)packBasicInfo.Volts / 1000,2));
+      if(packCellInfo.NumOfCells != 0){
+        mqttclient.publish(GetTopic("cell-voltage"), String((float)packBasicInfo.Volts /(1000*packCellInfo.NumOfCells), 2));
       }
+      mqttclient.publish(GetTopic("cell-diff"), String((float)packCellInfo.CellDiff, 0));
+      mqttclient.publish(GetTopic("soc"), String((float)packBasicInfo.CapacityRemainPercent,1));
+  
+      mqttclient.publish(GetTopic("temperature-1"), String((float)packBasicInfo.Temp1 / 10,1));
+      mqttclient.publish(GetTopic("temperature-2"), String((float)packBasicInfo.Temp2 / 10,1));
     }
+
+    MqttPublishDebug();
     
     mqttclient.loop();
-    
   }
 }
 
-// received something on subscribed topics
+// handler for incoming messages
 void handleMQTTreceive(String &topic, String &payload) {
-
-  if(topic.indexOf(GetTopic("interval-ref")) >=0){
-    mqtt_interval = payload.toInt();
-  }
-  
 }
-
 
 // connect and subscribe
 void MQTTconnect(void) {
@@ -249,27 +244,13 @@ void MQTTconnect(void) {
   static unsigned long prev_millis=0;
 
   if(!mqttclient.connected()){
-    if(InterruptPending(&prev_millis,5*1000,0)){
-      
-      Serial.print("Attempting MQTT connection...");
-      // Attempt to connect
-      int retVal;
-      if(strcmp(MQTT_USERNAME, "") == 0){
-        retVal=mqttclient.connect(NODE_NAME);
-      }else{
-        retVal=mqttclient.connect(NODE_NAME,MQTT_USERNAME,MQTT_PASSWORD);
-      }
-
-      if (retVal) {
-        Serial.println("connected");
-        mqttclient.publish(GetTopic("ip"), IPAddressString(WiFi.localIP()));
-        
-        mqttclient.subscribe(GetTopic("interval-ref"));
-              
-        mqtt_reconnects++;
-      } else {
-        Serial.print("failed");
-      }
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    
+    if (mqttclient.connect(NODE_NAME)) {
+      Serial.println("connected");
+    } else {
+      Serial.print("failed");
     }
   }
 }
@@ -281,16 +262,36 @@ String IPAddressString(IPAddress address){
 }
 
 
+
 void MqttDebug(const char* msg){
   MqttDebug(String(msg));
 }
 
 void MqttDebug(String msg){
-  if (mqttclient.connected()){
-    mqttclient.publish(GetTopic("debug"), msg);
-    mqttclient.loop();
-  }
+  debug_log_string += msg + "(|)";
 }
+
+void MqttPublishDebug(){
+  if(debug_log_string!=""){
+    // spit out all debug messages that were stored
+    int index_start=0;
+    int index_end=0;
+    unsigned int k=0;
+
+    while(true){
+      index_end=debug_log_string.indexOf(String("(|)"), index_start+1);
+      if((index_end<1)||(k++>20)){ // max 20 messages
+        break;
+      }
+               
+      mqttclient.publish(GetTopic("debug"), debug_log_string.substring(index_start,index_end)); 
+      
+      index_start=index_end+3;
+    }
+    debug_log_string="";  // clear log string
+  }  
+}
+
 
 String GetTopic(String topic){
   return String(NODE_NAME) + String("/") + String(topic);

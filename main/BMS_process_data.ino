@@ -1,44 +1,35 @@
 bool isPacketValid(byte *packet) //check if packet is valid
 {
-    if (packet == nullptr)
-    {
+    if (packet == nullptr){
         return false;
     }
 
     bmsPacketHeaderStruct *pHeader = (bmsPacketHeaderStruct *)packet;
-    int checksumLen = pHeader->dataLen + 2; // status + data len + data
+    int checksumPos = pHeader->dataLen + 2; // status + data len + data
 
-    if (pHeader->start != 0xDD)
-    {
+    int offset = 2; // header 0xDD and command type are not in data length
+
+    if (packet[0] != 0xDD){
+        // start bit missing
         return false;
     }
 
-    int offset = 2; // header 0xDD and command type are skipped
+    if (packet[offset + checksumPos + 2] != 0x77){
+        // stop bit missing
+        return false;
+    }
 
     byte checksum = 0;
-    for (int i = 0; i < checksumLen; i++)
-    {
+    for (int i = 0; i < checksumPos; i++){
         checksum += packet[offset + i];
     }
-
-    //printf("checksum: %x\n", checksum);
-
     checksum = ((checksum ^ 0xFF) + 1) & 0xFF;
-    //printf("checksum v2: %x\n", checksum);
 
-    byte rxChecksum = packet[offset + checksumLen + 1];
-
-    if (checksum == rxChecksum)
-    {
-        //printf("Packet is valid\n");
-        return true;
-    }
-    else
-    {
-        //printf("Packet is not valid\n");
-        //printf("Expected value: %x\n", rxChecksum);
+    if (checksum != packet[offset + checksumPos + 1]){
         return false;
     }
+    
+    return true;
 }
 
 bool processBasicInfo(packBasicInfoStruct *output, byte *data, unsigned int dataLen)
@@ -152,38 +143,61 @@ bool bmsProcessPacket(byte *packet)
 bool bleCollectPacket(char *data, uint32_t dataSize) // reconstruct packet, called by notifyCallback function
 {
     static uint8_t packetstate = 0; //0 - empty, 1 - first half of packet received, 2- second half of packet received
-    static uint8_t packetbuff[2*BMS_MAX_CELLS+15] = {0x0};
-    static uint32_t previousDataSize = 0;
+
+    // packet sizes: 
+    //  (packet ID 03) = 4 (header) + 23 + 2*N_NTCs + 2 (checksum) + 1 (stop)
+    //  (packet ID 04) = 4 (header) + 2*NUM_CELLS   + 2 (checksum) + 1 (stop)
+    static uint8_t packetbuff[4 + 2*25 + 2 + 1] = {0x0}; // buffer size suitable for up to 25 cells
+    
+    static uint32_t totalDataSize = 0;
     bool retVal = false;
     //hexDump(data,dataSize);
-
-    if (data[0] == 0xdd && packetstate == 0) // probably got 1st half of packet
+      
+    if(totalDataSize + dataSize > sizeof(packetbuff)){
+      Serial.printf("ERROR: datasize is overlength.");
+      
+      MqttDebug(
+        String("ERROR: datasize is overlength. ") + 
+        String("allocated=") +
+        String(sizeof(packetbuff)) + 
+        String(", size=") +
+        String(totalDataSize + dataSize)
+        );
+      
+      totalDataSize = 0;
+      packetstate = 0;
+      
+      retVal = false;
+    }
+    else if (data[0] == 0xdd && packetstate == 0) // probably got 1st half of packet
     {
         packetstate = 1;
-        previousDataSize = dataSize;
         for (uint8_t i = 0; i < dataSize; i++)
         {
             packetbuff[i] = data[i];
         }
-        retVal = false;
+        totalDataSize = dataSize;
+        retVal = true;
     }
     else if (data[dataSize - 1] == 0x77 && packetstate == 1) //probably got 2nd half of the packet
     {
         packetstate = 2;
         for (uint8_t i = 0; i < dataSize; i++)
         {
-            packetbuff[i + previousDataSize] = data[i];
+            packetbuff[i + totalDataSize] = data[i];
         }
-        retVal = false;
+        totalDataSize += dataSize;
+        retVal = true;
     }
     
     if (packetstate == 2) //got full packet
     {
-        uint8_t packet[dataSize + previousDataSize];
-        memcpy(packet, packetbuff, dataSize + previousDataSize);
+        uint8_t packet[totalDataSize];
+        memcpy(packet, packetbuff, totalDataSize);
 
         bmsProcessPacket(packet); //pass pointer to retrieved packet to processing function
         packetstate = 0;
+        totalDataSize = 0;
         retVal = true;
     }
     return retVal;

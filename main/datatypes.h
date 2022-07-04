@@ -1,8 +1,6 @@
 #ifndef mydatatypes_H_
 #define mydatatypes_H_
 
-#define BMS_MAX_CELLS 20
-
 typedef struct
 {
 	byte start;
