@@ -129,7 +129,7 @@ void handleBLE(){
   
   while(true){ // loop until we hit a timeout or gathered all packets
     
-    if((ble_packets_received == BLE_PACKETSRECEIVED_BEFORE_STANDBY) || (millis()>prev_millis_standby+BLE_SCAN_TIMEOUT)){    
+    if((ble_packets_received == BLE_PACKETSRECEIVED_BEFORE_STANDBY) || (millis()>prev_millis_standby+BLE_TIMEOUT)){    
       if(ble_packets_received == BLE_PACKETSRECEIVED_BEFORE_STANDBY){
         MqttDebug("BLE: all packets received");
         bms_status=true; // BMS was connected, data up-to-date
@@ -199,7 +199,7 @@ void handleBLE(){
   }
 }
 
-void bleStartGatherPacketsStop(){
+void bleGatherPackets(){
   bleStart();
   handleBLE();
   blePause();
