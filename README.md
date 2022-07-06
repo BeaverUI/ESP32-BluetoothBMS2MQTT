@@ -1,8 +1,8 @@
 # ESP32-BluetoothBMS2MQTT
 
-Connects to Xiaoxiang BMS (www.lithiumbatterypcb.com) via Bluetooth and sends its status to an MQTT server over WiFi.
+*Use Releases (right side of this page) to download the latest version.*
 
-Use the Releases (right side of this page) to download the latest version.
+Connects to Xiaoxiang BMS (www.lithiumbatterypcb.com) via Bluetooth and sends its status to an MQTT server over WiFi.
 
 
 This work is based on https://github.com/kolins-cz/Smart-BMS-Bluetooth-ESP32, with several enhancements/fixes:
