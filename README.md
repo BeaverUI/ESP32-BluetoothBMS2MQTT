@@ -7,7 +7,6 @@ This work is based on https://github.com/kolins-cz/Smart-BMS-Bluetooth-ESP32, wi
 * more advanced timeout and connection-related features, saving energy of the BMS
 * added MQTT functionality
 * removed the display routines (uses MQTT instead)
-* over-the-air updates (via ArduinoOTA)
 
 ## Required stuff
 * ESP32 (with Bluetooth and WiFi). This code was tested on TTGO-Energy (https://github.com/LilyGO/LILYGO-T-Energy) and T-Koala (https://github.com/LilyGO/T-Koala) boards, but should work with any ESP32.
@@ -18,9 +17,9 @@ Note: some ESP boards experience brownouts (resets) with this code due to the hi
 
 ## Programming the ESP
 * Install the Arduino IDE
-* Configure the IDE:
-	* In preferences, add the board manager URL: https://dl.espressif.com/dl/package_esp32_index.json
-	* Install the following libraries: ArduinoOTA by Arduino, MQTT by Joel Gahwiler
+* Configure the IDE (see code for more info):
+	* In preferences, add the board manager URL
+	* Install the required libraries
 * Open main.ino
 * Configure the programmer:
 	* Connect the ESP32 board via USB, select the correct COM port
