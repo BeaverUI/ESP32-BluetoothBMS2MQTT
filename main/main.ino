@@ -176,7 +176,7 @@ void enableWatchdogTimer(){
 // WDT handler to put ESP in deep sleep after data has been obtained
 void ARDUINO_ISR_ATTR WatchDogTimeoutHandler()
 { 
-  esp_sleep_enable_timer_wakeup(BMS_POLLING_INTERVAL * 1e3); // standby period is in ms, function accepts us
+  esp_sleep_enable_timer_wakeup((BMS_POLLING_INTERVAL - WATCHDOG_TIMEOUT) * 1e3); // standby period is in ms, function accepts us
   esp_deep_sleep_start(); // sweet dreams
 }
 
